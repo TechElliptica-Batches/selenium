@@ -31,8 +31,13 @@ playwright/
 │       └── UserDetailsDrawer.js
 ├── utils/
 │   ├── apiClient.js           # REST helpers for setup/teardown
-│   ├── testDataFactory.js     # Dynamic user builders
+│   ├── testDataFactory.js     # Dynamic user builders (runtime-generated data)
+│   ├── testDataLoader.js      # Load static test data from JSON files
+│   ├── credentialResolver.js  # Resolve USE_ADMIN_* placeholders from config
 │   └── waitUtils.js           # Explicit waits, debounce
+├── testdata/                  # Static test data JSON files (by module)
+│   └── auth/
+│       └── login.json
 ├── resources/
 │   ├── config.properties
 │   └── environments/          # local.properties, staging.properties, overrides
@@ -75,8 +80,9 @@ BASE_URL=http://localhost:5173 npm test
 ```
 
 ### In tests
-- Import credentials from config: `import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../../config/config.js"`
-- Never hardcode URLs or credentials in test files
+- Environment-specific values (URLs, admin credentials): import from `config/config.js`
+- Static test inputs, expected messages, toast titles: load from `testdata/` JSON via `testDataLoader.js`
+- Never hardcode URLs, credentials, or assertion strings inline in spec files
 
 ## TEST_FILE_RULES
 
@@ -161,7 +167,130 @@ test.beforeEach(async ({ clearSession }) => {
 
 ## TEST_DATA_RULES
 
-### Dynamic data (preferred)
+### Static data — JSON files (preferred for spec inputs & assertions)
+
+Store inputs, expected messages, toast titles, and validation text in JSON under `testdata/`, grouped by module:
+
+```plaintext
+testdata/
+├── auth/
+│   └── login.json
+├── users/
+│   └── users-crud.json
+└── products/
+    └── products.json
+```
+
+Load via `testDataLoader.js`:
+
+```javascript
+import { loadTestData } from "../../utils/testDataLoader.js";
+
+const data = loadTestData("auth/login.json");
+await loginPage.login(data.credentials.invalid.email, data.credentials.invalid.password);
+expect(await toast.hasTitle(data.toasts.loginFailed.variant, data.toasts.loginFailed.title)).toBe(true);
+```
+
+### JSON file conventions
+- One JSON file per spec or feature area: `testdata/{module}/{feature}.json`
+- Use nested keys by concern: `scenarios`, `validationErrors`, `toasts`, `urls`, `staticValues`
+- Group combinations in a `scenarios` array — one object per test case with `id`, `name`, `category`, `tags`, inputs, and `expected`
+- Use `USE_ADMIN_EMAIL` / `USE_ADMIN_PASSWORD` placeholders for environment credentials (resolved by `credentialResolver.js`)
+- Keep environment-specific secrets out of JSON — never hardcode admin password in JSON
+- JSON holds static test inputs, combinations, and expected outcomes only
+
+### Scenario-driven tests (data combinations)
+
+Define multiple input combinations in JSON and loop in the spec:
+
+```javascript
+import { loadTestData } from "../../utils/testDataLoader.js";
+import { resolveScenarioCredentials } from "../../utils/credentialResolver.js";
+
+const data = loadTestData("auth/login.json");
+
+for (const scenario of data.scenarios) {
+  test(`[${scenario.id}] ${scenario.name}`, async ({ loginPage, toast, page }) => {
+    const { email, password } = resolveScenarioCredentials(scenario);
+    await loginPage.fillCredentials(email, password);
+    await loginPage.submit();
+    // assert based on scenario.expected.type: success | auth-error | validation-error
+  });
+}
+```
+
+### Scenario object shape
+```json
+{
+  "id": "LOGIN-006",
+  "name": "should validate empty email with valid password",
+  "category": "validation",
+  "tags": ["empty-field", "email"],
+  "email": "",
+  "password": "USE_ADMIN_PASSWORD",
+  "expected": {
+    "type": "validation-error",
+    "errorKey": "emailRequired"
+  }
+}
+```
+
+### Expected outcome types
+| type | Meaning | Assert |
+|---|---|---|
+| `success` | Valid login | URL redirect + success toast |
+| `auth-error` | Server rejected credentials | Stay on login + error toast |
+| `validation-error` | Client-side form validation | Error message on page |
+| `prefill` | UI default state | Field values match config |
+
+### Login combination categories (reference)
+| Category | Examples |
+|---|---|
+| positive | Valid admin email + password |
+| negative-auth | Wrong email/password combos, unregistered user |
+| validation | Empty email, empty password, both empty, whitespace-only |
+| email-format | Malformed email, missing domain |
+| ui-behavior | Pre-filled credentials, submit flow |
+
+### Example JSON shape (auth/login.json)
+```json
+{
+  "staticValues": {
+    "invalidEmail": "wrong@acme.test",
+    "invalidPassword": "wrongpass",
+    "malformedEmail": "not-an-email",
+    "empty": ""
+  },
+  "validationErrors": {
+    "emailRequired": "Email is required",
+    "passwordRequired": "Password is required",
+    "invalidEmailFormat": "Enter a valid email"
+  },
+  "scenarios": [
+    {
+      "id": "LOGIN-002",
+      "name": "should reject invalid email and invalid password",
+      "category": "negative-auth",
+      "email": "wrong@acme.test",
+      "password": "wrongpass",
+      "expected": { "type": "auth-error", "toast": "loginFailed" }
+    },
+    {
+      "id": "LOGIN-008",
+      "name": "should validate empty email and empty password",
+      "category": "validation",
+      "email": "",
+      "password": "",
+      "expected": { "type": "validation-error", "errorKey": "emailRequired" }
+    }
+  ]
+}
+```
+
+### Dynamic data — testDataFactory (runtime-generated entities)
+
+Use for unique users created during test runs:
+
 ```javascript
 import { buildUser, uniqueEmail } from "../../utils/testDataFactory.js";
 
@@ -182,10 +311,18 @@ const email = uniqueEmail("prefix");
 }
 ```
 
-### No external data files
-- Do NOT create CSV/JSON fixture files
-- Do NOT use test.each with inline arrays for static credentials
-- Use apiClient for seed data when UI setup is slow or unreliable
+### When to use which
+| Source | Use for |
+|---|---|
+| `testdata/*.json` | Static credentials (invalid), form inputs, error messages, toast titles, URL patterns |
+| `config/config.js` | Environment URLs, admin credentials |
+| `testDataFactory.js` | Unique users/emails created per test run |
+| `apiClient.js` | Seed/cleanup entities via REST |
+
+### Do NOT
+- Hardcode assertion strings or test inputs directly in spec files
+- Put environment secrets or URLs in JSON files
+- Use CSV files — use JSON only
 
 ## API_CLIENT_RULES
 
@@ -260,18 +397,20 @@ Use when test depends on backend seed data that may not exist.
 When generating a new test:
 1. Identify module folder (auth/dashboard/navigation/users/products)
 2. Create or extend spec file with `test.describe` matching feature
-3. Import `test, expect` from fixtures
-4. Import config constants if credentials needed
-5. Import testDataFactory if creating users
-6. Import apiClient if API setup/teardown needed
-7. Use `loginAsAdmin()` for authenticated flows
-8. Use `clearSession()` for unauthenticated flows
-9. Interact ONLY through page objects — no raw selectors in test body
-10. Name test `should{Behavior}` matching Selenium naming
-11. Add API cleanup in afterEach for created entities
-12. Add test.skip when seed data may be missing
-13. Do NOT add comments explaining obvious code
-14. Do NOT create new utility files unless logic is reused 3+ times
+3. Create or extend `testdata/{module}/{feature}.json` for static inputs and expected values
+4. Import `test, expect` from fixtures
+5. Import `loadTestData` and `resolveScenarioCredentials` for data-driven specs
+6. Define credential combinations in `scenarios[]` — do not duplicate tests per combination in code
+7. Import testDataFactory if creating unique runtime users
+8. Import apiClient if API setup/teardown needed
+9. Use `loginAsAdmin()` for authenticated flows
+10. Use `clearSession()` for unauthenticated flows
+11. Interact ONLY through page objects — no raw selectors in test body
+12. Name test `should{Behavior}` matching Selenium naming
+13. Add API cleanup in afterEach for created entities
+14. Add test.skip when seed data may be missing
+15. Do NOT add comments explaining obvious code
+16. Do NOT hardcode test data in spec files — use JSON + config
 
 ## NEW_PAGE_OBJECT_CHECKLIST
 
@@ -286,6 +425,7 @@ When app adds a new page:
 
 - Import test from `@playwright/test` directly
 - Use `page.locator(".class-name")` or `page.locator("#id")`
+- Hardcode assertion strings, inputs, or toast messages in spec files
 - Hardcode `http://localhost:5173` in tests
 - Use `page.waitForTimeout()` except via waitUtils.debounce()
 - Put assertions inside page objects
@@ -294,6 +434,24 @@ When app adds a new page:
 - Run tests in parallel without isolated test data
 
 ## SAMPLE_TEST_TEMPLATES
+
+### Login test with JSON test data
+```javascript
+import { test, expect } from "../../fixtures/index.js";
+import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../../config/config.js";
+import { loadTestData } from "../../utils/testDataLoader.js";
+
+const data = loadTestData("auth/login.json");
+
+test.describe("Login", () => {
+  test("should show error toast for invalid credentials", async ({ page, loginPage, toast }) => {
+    const { email, password } = data.credentials.invalid;
+    await loginPage.login(email, password);
+    await expect(page).toHaveURL(new RegExp(data.urls.loginPattern));
+    expect(await toast.hasTitle(data.toasts.loginFailed.variant, data.toasts.loginFailed.title)).toBe(true);
+  });
+});
+```
 
 ### Authenticated smoke test
 ```javascript

@@ -15,7 +15,8 @@
     "test:products": "playwright test tests/products",
     "test:navigation": "playwright test tests/navigation",
     "report": "playwright show-report",
-    "codegen": "playwright codegen"
+    "codegen": "playwright codegen",
+    "export:azure": "node scripts/exportAzureDevOpsTestCases.js"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0"

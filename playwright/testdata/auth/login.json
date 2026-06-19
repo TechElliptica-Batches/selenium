@@ -1,0 +1,244 @@
+{
+  "credentialPlaceholders": {
+    "adminEmail": "USE_ADMIN_EMAIL",
+    "adminPassword": "USE_ADMIN_PASSWORD"
+  },
+  "staticValues": {
+    "invalidEmail": "wrong@acme.test",
+    "invalidPassword": "wrongpass",
+    "unregisteredEmail": "unknown.user@acme.test",
+    "malformedEmail": "not-an-email",
+    "malformedEmailNoDomain": "user@",
+    "whitespaceOnly": "   ",
+    "empty": ""
+  },
+  "validationErrors": {
+    "emailRequired": "Email is required",
+    "passwordRequired": "Password is required",
+    "invalidEmailFormat": "Enter a valid email"
+  },
+  "toasts": {
+    "loginSuccess": {
+      "variant": "success",
+      "title": "Welcome back"
+    },
+    "loginFailed": {
+      "variant": "error",
+      "title": "Login failed"
+    }
+  },
+  "urls": {
+    "dashboard": "/",
+    "loginPattern": "/login"
+  },
+  "scenarios": [
+    {
+      "id": "LOGIN-001",
+      "name": "should login with valid admin credentials",
+      "category": "positive",
+      "tags": ["smoke", "happy-path"],
+      "email": "USE_ADMIN_EMAIL",
+      "password": "USE_ADMIN_PASSWORD",
+      "expected": {
+        "type": "success",
+        "url": "/",
+        "toast": "loginSuccess"
+      }
+    },
+    {
+      "id": "LOGIN-002",
+      "name": "should reject invalid email and invalid password",
+      "category": "negative-auth",
+      "tags": ["invalid-creds"],
+      "email": "wrong@acme.test",
+      "password": "wrongpass",
+      "expected": {
+        "type": "auth-error",
+        "stayOnLogin": true,
+        "toast": "loginFailed"
+      }
+    },
+    {
+      "id": "LOGIN-003",
+      "name": "should reject valid email with wrong password",
+      "category": "negative-auth",
+      "tags": ["invalid-creds"],
+      "email": "USE_ADMIN_EMAIL",
+      "password": "wrongpass",
+      "expected": {
+        "type": "auth-error",
+        "stayOnLogin": true,
+        "toast": "loginFailed"
+      }
+    },
+    {
+      "id": "LOGIN-004",
+      "name": "should reject wrong email with valid password",
+      "category": "negative-auth",
+      "tags": ["invalid-creds"],
+      "email": "wrong@acme.test",
+      "password": "USE_ADMIN_PASSWORD",
+      "expected": {
+        "type": "auth-error",
+        "stayOnLogin": true,
+        "toast": "loginFailed"
+      }
+    },
+    {
+      "id": "LOGIN-005",
+      "name": "should reject unregistered email with invalid password",
+      "category": "negative-auth",
+      "tags": ["invalid-creds"],
+      "email": "unknown.user@acme.test",
+      "password": "wrongpass",
+      "expected": {
+        "type": "auth-error",
+        "stayOnLogin": true,
+        "toast": "loginFailed"
+      }
+    },
+    {
+      "id": "LOGIN-006",
+      "name": "should validate empty email with valid password",
+      "category": "validation",
+      "tags": ["empty-field", "email"],
+      "email": "",
+      "password": "USE_ADMIN_PASSWORD",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "emailRequired"
+      }
+    },
+    {
+      "id": "LOGIN-007",
+      "name": "should validate valid email with empty password",
+      "category": "validation",
+      "tags": ["empty-field", "password"],
+      "email": "USE_ADMIN_EMAIL",
+      "password": "",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "passwordRequired"
+      }
+    },
+    {
+      "id": "LOGIN-008",
+      "name": "should validate empty email and empty password",
+      "category": "validation",
+      "tags": ["empty-field", "both-fields"],
+      "email": "",
+      "password": "",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "emailRequired"
+      }
+    },
+    {
+      "id": "LOGIN-009",
+      "name": "should validate empty email with invalid password",
+      "category": "validation",
+      "tags": ["empty-field", "email"],
+      "email": "",
+      "password": "wrongpass",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "emailRequired"
+      }
+    },
+    {
+      "id": "LOGIN-010",
+      "name": "should validate valid email with whitespace-only password",
+      "category": "validation",
+      "tags": ["empty-field", "password", "whitespace"],
+      "email": "USE_ADMIN_EMAIL",
+      "password": "   ",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "passwordRequired"
+      }
+    },
+    {
+      "id": "LOGIN-011",
+      "name": "should validate whitespace-only email with valid password",
+      "category": "validation",
+      "tags": ["empty-field", "email", "whitespace"],
+      "email": "   ",
+      "password": "USE_ADMIN_PASSWORD",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "emailRequired"
+      }
+    },
+    {
+      "id": "LOGIN-012",
+      "name": "should validate malformed email with valid password",
+      "category": "validation",
+      "tags": ["email-format"],
+      "email": "not-an-email",
+      "password": "USE_ADMIN_PASSWORD",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "invalidEmailFormat"
+      }
+    },
+    {
+      "id": "LOGIN-013",
+      "name": "should validate email missing domain with valid password",
+      "category": "validation",
+      "tags": ["email-format"],
+      "email": "user@",
+      "password": "USE_ADMIN_PASSWORD",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "invalidEmailFormat"
+      }
+    },
+    {
+      "id": "LOGIN-014",
+      "name": "should validate malformed email with empty password",
+      "category": "validation",
+      "tags": ["email-format", "empty-field"],
+      "email": "not-an-email",
+      "password": "",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "invalidEmailFormat"
+      }
+    },
+    {
+      "id": "LOGIN-015",
+      "name": "should validate malformed email with invalid password",
+      "category": "validation",
+      "tags": ["email-format", "invalid-creds"],
+      "email": "not-an-email",
+      "password": "wrongpass",
+      "expected": {
+        "type": "validation-error",
+        "errorKey": "invalidEmailFormat"
+      }
+    }
+  ],
+  "uiChecks": [
+    {
+      "id": "LOGIN-UI-001",
+      "name": "should disable submit button while signing in",
+      "category": "ui-behavior",
+      "email": "USE_ADMIN_EMAIL",
+      "password": "USE_ADMIN_PASSWORD",
+      "expected": {
+        "type": "success",
+        "url": "/"
+      }
+    },
+    {
+      "id": "LOGIN-UI-002",
+      "name": "should pre-fill sample admin credentials",
+      "category": "ui-behavior",
+      "expected": {
+        "type": "prefill",
+        "email": "USE_ADMIN_EMAIL",
+        "password": "USE_ADMIN_PASSWORD"
+      }
+    }
+  ]
+}

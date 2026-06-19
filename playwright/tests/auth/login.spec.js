@@ -1,5 +1,8 @@
 import { test, expect } from "../../fixtures/index.js";
-import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../../config/config.js";
+import { loadTestData } from "../../utils/testDataLoader.js";
+import { resolveScenarioCredentials } from "../../utils/credentialResolver.js";
+
+const data = loadTestData("auth/login.json");
 
 test.describe("Login", () => {
   test.beforeEach(async ({ page, loginPage, clearSession }) => {
@@ -9,50 +12,51 @@ test.describe("Login", () => {
     await loginPage.openLogin();
   });
 
-  test("should login with valid credentials and show success toast", async ({
-    page,
-    loginPage,
-    dashboardPage,
-    toast
-  }) => {
-    await loginPage.login(ADMIN_EMAIL, ADMIN_PASSWORD);
-    await expect(page).toHaveURL("/");
-    await dashboardPage.waitForLoaded();
-    expect(await toast.hasTitle("success", "Welcome back")).toBe(true);
-  });
+  for (const scenario of data.scenarios) {
+    test(`[${scenario.id}] ${scenario.name}`, async ({ page, loginPage, dashboardPage, toast }) => {
+      const { email, password } = resolveScenarioCredentials(scenario);
+      await loginPage.fillCredentials(email, password);
+      await loginPage.submit();
 
-  test("should show error toast for invalid credentials", async ({ page, loginPage, toast }) => {
-    await loginPage.login("wrong@acme.test", "wrongpass");
-    await expect(page).toHaveURL(/\/login/);
-    expect(await toast.hasTitle("error", "Login failed")).toBe(true);
-  });
+      const { expected } = scenario;
 
-  test("should validate required email field", async ({ loginPage }) => {
-    await loginPage.fillCredentials("", ADMIN_PASSWORD);
-    await loginPage.submit();
-    expect(await loginPage.hasValidationError("Email is required")).toBe(true);
-  });
+      if (expected.type === "success") {
+        await expect(page).toHaveURL(expected.url ?? data.urls.dashboard);
+        await dashboardPage.waitForLoaded();
+        const toastDef = data.toasts[expected.toast];
+        expect(await toast.hasTitle(toastDef.variant, toastDef.title)).toBe(true);
+        return;
+      }
 
-  test("should validate required password field", async ({ loginPage }) => {
-    await loginPage.fillCredentials(ADMIN_EMAIL, "");
-    await loginPage.submit();
-    expect(await loginPage.hasValidationError("Password is required")).toBe(true);
-  });
+      if (expected.type === "auth-error") {
+        await expect(page).toHaveURL(new RegExp(data.urls.loginPattern));
+        const toastDef = data.toasts[expected.toast];
+        expect(await toast.hasTitle(toastDef.variant, toastDef.title)).toBe(true);
+        return;
+      }
 
-  test("should validate email format", async ({ loginPage }) => {
-    await loginPage.fillCredentials("not-an-email", ADMIN_PASSWORD);
-    await loginPage.submit();
-    expect(await loginPage.hasValidationError("Enter a valid email")).toBe(true);
-  });
+      if (expected.type === "validation-error") {
+        const message = data.validationErrors[expected.errorKey];
+        expect(await loginPage.hasValidationError(message)).toBe(true);
+      }
+    });
+  }
 
-  test("should disable submit button while signing in", async ({ page, loginPage }) => {
-    await loginPage.fillCredentials(ADMIN_EMAIL, ADMIN_PASSWORD);
-    await loginPage.submit();
-    await expect(page).toHaveURL("/");
-  });
+  for (const check of data.uiChecks) {
+    test(`[${check.id}] ${check.name}`, async ({ page, loginPage }) => {
+      const { expected } = check;
 
-  test("should pre-fill sample admin credentials", async ({ loginPage }) => {
-    expect(await loginPage.emailValue()).toBe(ADMIN_EMAIL);
-    expect(await loginPage.passwordValue()).toBe(ADMIN_PASSWORD);
-  });
+      if (expected.type === "prefill") {
+        const { email, password } = resolveScenarioCredentials(expected);
+        expect(await loginPage.emailValue()).toBe(email);
+        expect(await loginPage.passwordValue()).toBe(password);
+        return;
+      }
+
+      const { email, password } = resolveScenarioCredentials(check);
+      await loginPage.fillCredentials(email, password);
+      await loginPage.submit();
+      await expect(page).toHaveURL(expected.url ?? data.urls.dashboard);
+    });
+  }
 });
