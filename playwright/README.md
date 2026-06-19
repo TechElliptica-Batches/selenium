@@ -89,6 +89,34 @@ playwright/
 
 Use `rules.context` in prompts to generate new tests that follow framework conventions.
 
+## Azure DevOps Pipeline
+
+Two pipeline files are available at the repo root (`selenium/`):
+
+| File | Use when |
+|------|----------|
+| [`../azure-pipelines.yml`](../azure-pipelines.yml) | App is already deployed (staging/CI URLs via pipeline variables) |
+| [`azure-pipelines-local-stack.yml`](azure-pipelines-local-stack.yml) | Agent starts api-practice app stack before tests |
+
+### Quick setup (deployed environment)
+
+1. **Pipelines** → **New pipeline** → select repo → **Existing Azure Pipelines YAML file** → `/azure-pipelines.yml`
+2. Add pipeline variables:
+
+| Variable | Example |
+|----------|---------|
+| `BASE_URL` | `https://your-frontend.azurewebsites.net` |
+| `USERS_API_BASE_URL` | `https://your-users-api.azurewebsites.net/api` |
+| `PRODUCTS_API_BASE_URL` | `https://your-products-api.azurewebsites.net/api` |
+| `ADMIN_PASSWORD` | *(mark as secret)* |
+
+3. Run pipeline — parameters: **environment**, **test scope** (all/auth/users/…), **publish report**
+
+### Pipeline outputs
+
+- **Tests** tab — JUnit results (54 test cases)
+- **Artifacts** — `playwright-html-report`, `playwright-test-results` (on failure: screenshots, traces, video)
+
 ## Sample credentials
 
 - Email: `admin@acme.test`

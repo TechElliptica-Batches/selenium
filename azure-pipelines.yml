@@ -1,0 +1,203 @@
+# Azure DevOps — Playwright E2E Pipeline
+# Repo root: selenium/  |  Tests: playwright/
+#
+# Setup in Azure DevOps:
+#   1. Pipelines → New pipeline → Azure Repos Git → select this repo
+#   2. Choose "Existing Azure Pipelines YAML file" → /azure-pipelines.yml
+#   3. Set pipeline variables (see variables section below) or link a Variable Group
+#   4. Save & Run
+#
+# Scheduled run: daily at 2:00 AM IST (20:30 UTC) on main branch.
+# Enable in Azure DevOps: Pipeline → Edit → ⋯ → Triggers → Scheduled → verify schedule is on.
+
+trigger:
+  branches:
+    include:
+      - main
+      - develop
+      - release/*
+  paths:
+    include:
+      - playwright/**
+      - azure-pipelines.yml
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+  paths:
+    include:
+      - playwright/**
+      - azure-pipelines.yml
+
+# Daily schedule: 2:00 AM IST = 20:30 UTC (Azure DevOps cron uses UTC)
+schedules:
+  - cron: "30 20 * * *"
+    displayName: Daily 2 AM IST
+    branches:
+      include:
+        - main
+    always: true
+
+parameters:
+  - name: environment
+    displayName: Environment profile (property file)
+    type: string
+    default: staging
+    values:
+      - staging
+      - local
+      - ci
+
+  - name: testScope
+    displayName: Test scope
+    type: string
+    default: all
+    values:
+      - all
+      - auth
+      - dashboard
+      - navigation
+      - users
+      - products
+
+  - name: publishReport
+    displayName: Publish HTML report artifact
+    type: boolean
+    default: true
+
+# ── Pipeline variables ──────────────────────────────────────────────────────
+# Override in Azure DevOps → Pipeline → Edit → Variables, or use a Variable Group.
+#
+# Required when environment = staging (or any deployed target):
+#   BASE_URL                  e.g. https://your-app.azurewebsites.net
+#   USERS_API_BASE_URL        e.g. https://your-api.azurewebsites.net/api
+#   PRODUCTS_API_BASE_URL     e.g. https://your-products-api.azurewebsites.net/api
+#
+# Optional (defaults match local.properties):
+#   ADMIN_EMAIL               default: admin@acme.test
+#   ADMIN_PASSWORD            mark as secret in Azure DevOps
+#   HEADLESS                  default: true in CI
+#   EXPLICIT_WAIT_SECONDS     default: 20 for CI
+#
+# Link secrets via Variable Group example:
+#   - group: um-e2e-secrets
+
+variables:
+  - name: nodeVersion
+    value: "20.x"
+  - name: playwrightDir
+    value: playwright
+  - name: CI
+    value: "true"
+  - name: HEADLESS
+    value: "true"
+  - name: ENVIRONMENT
+    value: ${{ parameters.environment }}
+  - name: EXPLICIT_WAIT_SECONDS
+    value: "20"
+  # Uncomment and set in Azure DevOps UI for staging runs:
+  # - name: BASE_URL
+  #   value: https://staging.example.com
+  # - name: USERS_API_BASE_URL
+  #   value: https://staging.example.com/api
+  # - name: PRODUCTS_API_BASE_URL
+  #   value: https://staging-products.example.com/api
+
+stages:
+  - stage: E2E_Playwright
+    displayName: Playwright E2E Tests
+    jobs:
+      - job: RunPlaywright
+        displayName: Run Playwright (${{ parameters.testScope }})
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            displayName: Checkout repository
+
+          - task: NodeTool@0
+            displayName: Install Node.js
+            inputs:
+              versionSpec: $(nodeVersion)
+
+          - task: Cache@2
+            displayName: Cache npm dependencies
+            inputs:
+              key: 'npm | "$(Agent.OS)" | $(playwrightDir)/package-lock.json'
+              restoreKeys: |
+                npm | "$(Agent.OS)"
+              path: $(playwrightDir)/node_modules
+
+          - script: npm ci
+            displayName: Install npm packages
+            workingDirectory: $(playwrightDir)
+
+          - script: npx playwright install --with-deps chromium
+            displayName: Install Playwright browsers
+            workingDirectory: $(playwrightDir)
+
+          - script: |
+              set -e
+              echo "Environment profile: $(ENVIRONMENT)"
+              echo "BASE_URL=${BASE_URL:-not set — using property file default}"
+              echo "Running scope: ${{ parameters.testScope }}"
+            displayName: Print run configuration
+            workingDirectory: $(playwrightDir)
+            env:
+              BASE_URL: $(BASE_URL)
+              USERS_API_BASE_URL: $(USERS_API_BASE_URL)
+              PRODUCTS_API_BASE_URL: $(PRODUCTS_API_BASE_URL)
+              ADMIN_EMAIL: $(ADMIN_EMAIL)
+              ADMIN_PASSWORD: $(ADMIN_PASSWORD)
+
+          - script: |
+              set -e
+              SCOPE="${{ parameters.testScope }}"
+              if [ "$SCOPE" = "all" ]; then
+                npm test
+              else
+                npm run "test:$SCOPE"
+              fi
+            displayName: Run Playwright tests
+            workingDirectory: $(playwrightDir)
+            env:
+              CI: $(CI)
+              ENVIRONMENT: $(ENVIRONMENT)
+              HEADLESS: $(HEADLESS)
+              EXPLICIT_WAIT_SECONDS: $(EXPLICIT_WAIT_SECONDS)
+              BASE_URL: $(BASE_URL)
+              USERS_API_BASE_URL: $(USERS_API_BASE_URL)
+              PRODUCTS_API_BASE_URL: $(PRODUCTS_API_BASE_URL)
+              ADMIN_EMAIL: $(ADMIN_EMAIL)
+              ADMIN_PASSWORD: $(ADMIN_PASSWORD)
+
+          - task: PublishTestResults@2
+            displayName: Publish test results (JUnit)
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: $(playwrightDir)/test-results/junit-results.xml
+              testRunTitle: Playwright E2E — ${{ parameters.testScope }}
+              mergeTestResults: true
+              failTaskOnFailedTests: true
+              publishRunAttachments: true
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish Playwright HTML report
+            condition: and(succeededOrFailed(), eq('${{ parameters.publishReport }}', true))
+            inputs:
+              targetPath: $(playwrightDir)/playwright-report
+              artifact: playwright-html-report
+              publishLocation: pipeline
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish failure artifacts (screenshots, traces, video)
+            condition: failed()
+            inputs:
+              targetPath: $(playwrightDir)/test-results
+              artifact: playwright-test-results
+              publishLocation: pipeline
