@@ -1,0 +1,395 @@
+# Playwright E2E Framework — AI Test Generation Rules
+# Provide this file in prompts when generating new tests for the User Management app.
+
+## FRAMEWORK_OVERVIEW
+
+- Stack: Playwright + JavaScript (ES modules), Node.js 20+
+- App: Learning User Management frontend (React) with Users API (:4000) and Products API (:4001)
+- Pattern: Page Object Model + custom Playwright fixtures (mirrors Selenium BaseTest)
+- Locator strategy: `data-testid` attributes ONLY — never use CSS classes, XPath, or text unless asserting message content
+- Parallelism: disabled (`workers: 1`) — tests may share backend state
+
+## PROJECT_STRUCTURE
+
+```
+playwright/
+├── config/
+│   ├── config.js              # Typed config constants (import these in tests)
+│   └── environmentConfig.js   # Property file loader — do not import in tests
+├── fixtures/index.js          # Extended test + expect — ALWAYS import test from here
+├── pages/
+│   ├── BasePage.js            # Shared helpers: open, el, fillInput, testId, clearStorage
+│   ├── LoginPage.js
+│   ├── DashboardPage.js
+│   ├── UsersPage.js
+│   ├── ProductsPage.js
+│   ├── AppLayout.js
+│   └── components/
+│       ├── ToastComponent.js
+│       ├── ConfirmDialog.js
+│       ├── UserFormModal.js
+│       └── UserDetailsDrawer.js
+├── utils/
+│   ├── apiClient.js           # REST helpers for setup/teardown
+│   ├── testDataFactory.js     # Dynamic user builders
+│   └── waitUtils.js           # Explicit waits, debounce
+├── resources/
+│   ├── config.properties
+│   └── environments/          # local.properties, staging.properties, overrides
+├── tests/
+│   ├── auth/
+│   ├── dashboard/
+│   ├── navigation/
+│   ├── users/
+│   └── products/
+└── playwright.config.js
+```
+
+## ENVIRONMENT_RULES
+
+### Property file keys
+| Property key | Env var alias | Default |
+|---|---|---|
+| base.url | BASE_URL | http://localhost:5173 |
+| users.api.base.url | USERS_API_BASE_URL | http://localhost:4000/api |
+| products.api.base.url | PRODUCTS_API_BASE_URL | http://localhost:4001/api |
+| admin.email | ADMIN_EMAIL | admin@acme.test |
+| admin.password | ADMIN_PASSWORD | admin123 |
+| headless | HEADLESS | false |
+| browser | BROWSER | chromium |
+| explicit.wait.seconds | EXPLICIT_WAIT_SECONDS | 15 |
+
+### Resolution order (highest wins)
+1. OS env var (BASE_URL, ADMIN_EMAIL, …)
+2. process.env key
+3. environments/{profile}.override.properties
+4. environments/local.override.properties
+5. environments/{profile}.properties
+6. config.properties
+
+### Select profile
+```bash
+ENVIRONMENT=staging npm test
+HEADLESS=true npm test
+BASE_URL=http://localhost:5173 npm test
+```
+
+### In tests
+- Import credentials from config: `import { ADMIN_EMAIL, ADMIN_PASSWORD } from "../../config/config.js"`
+- Never hardcode URLs or credentials in test files
+
+## TEST_FILE_RULES
+
+### File naming
+- Pattern: `{feature}-{scope}.spec.js` (kebab-case)
+- Location: `tests/{module}/{feature}-{scope}.spec.js`
+- Examples: `login.spec.js`, `users-crud.spec.js`, `route-guard.spec.js`
+
+### Test naming
+- Pattern: `should{ExpectedBehavior}` in camelCase sentence
+- Examples: `should login with valid credentials and show success toast`
+
+### Required imports
+```javascript
+import { test, expect } from "../../fixtures/index.js";
+```
+Adjust relative path based on test depth (always import from fixtures, never from @playwright/test directly).
+
+### Describe blocks
+- One `test.describe("{Feature area}", () => { ... })` per file
+- Match Selenium TestNG class name conceptually (LoginTest → describe "Login")
+
+## FIXTURE_RULES
+
+### Available fixtures (inject via test callback params)
+| Fixture | Type | Purpose |
+|---|---|---|
+| page | Playwright Page | Raw page — use sparingly |
+| loginPage | LoginPage | Login form actions |
+| dashboardPage | DashboardPage | Dashboard stats |
+| usersPage | UsersPage | Users table CRUD UI |
+| productsPage | ProductsPage | Products grid UI |
+| appLayout | AppLayout | Nav + logout |
+| toast | ToastComponent | Toast assertions |
+| confirmDialog | ConfirmDialog | Delete confirmations |
+| userFormModal | UserFormModal | Create/edit user form |
+| userDetailsDrawer | UserDetailsDrawer | User details panel |
+| apiAuth | { token, user } | API session for setup/teardown |
+| loginAsAdmin | async () => void | UI login helper |
+| clearSession | async () => void | Clear localStorage |
+
+### Authentication patterns
+```javascript
+// Authenticated test
+test("should ...", async ({ loginAsAdmin, usersPage }) => {
+  await loginAsAdmin();
+  await usersPage.openUsers();
+});
+
+// Unauthenticated test
+test.beforeEach(async ({ clearSession }) => {
+  await clearSession();
+});
+```
+
+## PAGE_OBJECT_RULES
+
+### When to create a new page object
+- New route/page → new `{Name}Page.js` extending BasePage
+- Reusable UI fragment (modal, drawer, toast) → `pages/components/{Name}.js`
+
+### Page object conventions
+- Constructor receives `page` only
+- Public methods = user actions and state queries
+- Use `this.el(testId)` for visible element waits
+- Use `this.fillInput(testId, value)` for inputs
+- Use `this.selectOptionByValue(testId, value)` for selects
+- Use `this.testId(id)` for locators without wait
+- Navigation: `await this.open("/path")` (uses baseURL from config)
+- Never import `expect` in page objects — assertions belong in tests
+
+### Existing page methods (reuse, do not duplicate)
+- LoginPage: openLogin, login, loginWithDefaults, fillCredentials, submit
+- DashboardPage: waitForLoaded, getTotalUsersCount
+- UsersPage: openUsers, waitForTableReady, search, filterByRole, filterByStatus, setPageSize, sortBy, refresh, openCreateModal, openEditForUser, openDetailsForUser, deleteUser, selectUser, selectAllVisible, bulkDelete, nextPage, previousPage
+- ProductsPage: openProducts, waitForGridReady, search, filterByStatus, sortBy, setPageSize, refresh, toggleProduct, nextPage
+- AppLayout: goToDashboard, goToUsers, goToProducts, logout, isNavUsersActive
+- ToastComponent: hasTitle(variant, title), toastVisible(variant)
+- ConfirmDialog: confirm, cancel, isOpen
+- UserFormModal: fill(user), submit, cancel, hasValidationError, hasServerError
+- UserDetailsDrawer: close, isLoaded
+
+## TEST_DATA_RULES
+
+### Dynamic data (preferred)
+```javascript
+import { buildUser, uniqueEmail } from "../../utils/testDataFactory.js";
+
+const user = buildUser();
+const user = buildUser({ role: "Manager", status: "Inactive" });
+const email = uniqueEmail("prefix");
+```
+
+### Default user shape from buildUser()
+```javascript
+{
+  firstName: "E2E",
+  lastName: "User{stamp}",
+  email: "user.{timestamp}.{uuid}@acme.test",
+  phone: "555-XXX-XXX",
+  role: "Engineer",
+  status: "Active"
+}
+```
+
+### No external data files
+- Do NOT create CSV/JSON fixture files
+- Do NOT use test.each with inline arrays for static credentials
+- Use apiClient for seed data when UI setup is slow or unreliable
+
+## API_CLIENT_RULES
+
+### Import
+```javascript
+import {
+  loginViaApi,
+  createUserViaApi,
+  deleteUserViaApi,
+  getUsersViaApi,
+  getProductsViaApi,
+  clearSelectedProducts
+} from "../../utils/apiClient.js";
+```
+
+### Hybrid UI + API pattern
+```javascript
+// Setup via API
+const created = await createUserViaApi(buildUser(), apiAuth.token);
+
+// Act via UI
+await usersPage.refresh();
+await usersPage.openEditForUser(created.id);
+
+// Cleanup via API
+test.afterEach(async () => {
+  await deleteUserViaApi(created.id, apiAuth.token).catch(() => {});
+});
+```
+
+### When to use API vs UI
+| Use API for | Use UI for |
+|---|---|
+| Create seed users | Form validation |
+| Delete cleanup | Navigation flows |
+| Verify counts/totals | Toast/dialog interactions |
+| Skip when no data | Login/logout |
+| clearSelectedProducts | Product selection toggle |
+
+## ASSERTION_RULES
+
+- Use Playwright `expect` from fixtures for URL, visibility, text
+- Use page object query methods returning booleans for custom checks:
+  ```javascript
+  expect(await toast.hasTitle("success", "User created")).toBe(true);
+  expect(await usersPage.rowExists(userId)).toBe(true);
+  ```
+- Toast variants: `success`, `error`
+- URL checks: `await expect(page).toHaveURL(/\/login/)` or `toHaveURL("/")`
+
+## SKIP_CONDITIONS
+
+```javascript
+test.skip(data.total === 0, "No seed users available");
+test.skip(!productId, "No products available");
+```
+
+Use when test depends on backend seed data that may not exist.
+
+## MODULE_MAPPING
+
+| Module folder | Feature area | Page objects used |
+|---|---|---|
+| tests/auth | Login, logout, route guards | loginPage, dashboardPage, usersPage, toast, appLayout |
+| tests/dashboard | Dashboard stats | dashboardPage, apiAuth |
+| tests/navigation | Sidebar navigation | appLayout, dashboardPage, usersPage, productsPage |
+| tests/users | List, filters, CRUD | usersPage, userFormModal, confirmDialog, toast, userDetailsDrawer |
+| tests/products | Grid, filters, selection | productsPage, apiAuth |
+
+## NEW_TEST_GENERATION_CHECKLIST
+
+When generating a new test:
+1. Identify module folder (auth/dashboard/navigation/users/products)
+2. Create or extend spec file with `test.describe` matching feature
+3. Import `test, expect` from fixtures
+4. Import config constants if credentials needed
+5. Import testDataFactory if creating users
+6. Import apiClient if API setup/teardown needed
+7. Use `loginAsAdmin()` for authenticated flows
+8. Use `clearSession()` for unauthenticated flows
+9. Interact ONLY through page objects — no raw selectors in test body
+10. Name test `should{Behavior}` matching Selenium naming
+11. Add API cleanup in afterEach for created entities
+12. Add test.skip when seed data may be missing
+13. Do NOT add comments explaining obvious code
+14. Do NOT create new utility files unless logic is reused 3+ times
+
+## NEW_PAGE_OBJECT_CHECKLIST
+
+When app adds a new page:
+1. Create `pages/{Name}Page.js` extending BasePage
+2. Add fixture in `fixtures/index.js`
+3. Use data-testid locators matching frontend hooks
+4. Add wait method for page ready state (e.g. waitForLoaded)
+5. Export class as named export
+
+## ANTI_PATTERNS (never do)
+
+- Import test from `@playwright/test` directly
+- Use `page.locator(".class-name")` or `page.locator("#id")`
+- Hardcode `http://localhost:5173` in tests
+- Use `page.waitForTimeout()` except via waitUtils.debounce()
+- Put assertions inside page objects
+- Create page objects for one-off locators used in a single test
+- Use dotenv or .env files (use property files in resources/)
+- Run tests in parallel without isolated test data
+
+## SAMPLE_TEST_TEMPLATES
+
+### Authenticated smoke test
+```javascript
+import { test, expect } from "../../fixtures/index.js";
+
+test.describe("Feature name", () => {
+  test.beforeEach(async ({ loginAsAdmin }) => {
+    await loginAsAdmin();
+  });
+
+  test("should do something", async ({ usersPage }) => {
+    await usersPage.openUsers();
+    expect(await usersPage.isVisible("users-table")).toBe(true);
+  });
+});
+```
+
+### CRUD with API setup/teardown
+```javascript
+import { test, expect } from "../../fixtures/index.js";
+import { buildUser } from "../../utils/testDataFactory.js";
+import { createUserViaApi, deleteUserViaApi } from "../../utils/apiClient.js";
+
+test.describe("Feature CRUD", () => {
+  let createdIds = [];
+  let token;
+
+  test.beforeEach(async ({ loginAsAdmin, usersPage, apiAuth }) => {
+    token = apiAuth.token;
+    createdIds = [];
+    await loginAsAdmin();
+    await usersPage.openUsers();
+  });
+
+  test.afterEach(async () => {
+    for (const id of createdIds) {
+      await deleteUserViaApi(id, token).catch(() => {});
+    }
+  });
+
+  test("should create entity", async ({ usersPage, userFormModal, toast }) => {
+    const user = buildUser();
+    await usersPage.openCreateModal();
+    await userFormModal.fill(user);
+    await userFormModal.submit();
+    expect(await toast.hasTitle("success", "User created")).toBe(true);
+  });
+});
+```
+
+### Unauthenticated guard test
+```javascript
+import { test, expect } from "../../fixtures/index.js";
+
+test.describe("Route guard", () => {
+  test.beforeEach(async ({ clearSession }) => {
+    await clearSession();
+  });
+
+  test("should redirect to login", async ({ page }) => {
+    await page.goto("/users");
+    await expect(page).toHaveURL(/\/login/);
+  });
+});
+```
+
+## KNOWN_DATA_TESTIDS
+
+### Auth
+login-form, login-email, login-password, login-submit
+
+### Layout
+nav-dashboard, nav-users, nav-products, logout, logout-mobile
+
+### Dashboard
+stat-total-users
+
+### Users
+users-search, users-filter-role, users-filter-status, users-page-size, users-refresh,
+users-add, users-bulk-delete, users-select-all, users-table, users-empty-add,
+users-total, users-selected-count, users-prev, users-next, users-page,
+users-row-skeleton, user-row-{id}, user-select-{id}, user-edit-{id},
+user-view-{id}, user-delete-{id}, user-status-{id}, sort-{column}
+
+### User form
+user-firstName, user-lastName, user-email, user-phone, user-role, user-status,
+user-form-submit, user-form-cancel
+
+### User details
+details-close, details-name, details-email
+
+### Products
+products-search, products-filter-status, products-sort, products-page-size,
+products-refresh, products-grid, products-total, products-selected-count,
+products-prev, products-next, products-page, product-card-skeleton,
+product-card-{id}, product-toggle-{id}, products-saving
+
+### Shared
+toast-success, toast-error, confirm-ok, confirm-cancel

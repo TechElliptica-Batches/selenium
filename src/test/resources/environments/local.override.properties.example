@@ -1,0 +1,5 @@
+# Copy to environments/local.override.properties for machine-specific values (gitignored).
+# Loaded after environments/{environment}.properties when the file exists.
+#
+# base.url=http://192.168.1.10:5173
+# admin.password=your-local-password

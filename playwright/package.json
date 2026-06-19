@@ -1,0 +1,23 @@
+{
+  "name": "user-management-playwright",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Playwright E2E test framework for the Learning User Management frontend",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:ui": "playwright test --ui",
+    "test:debug": "playwright test --debug",
+    "test:auth": "playwright test tests/auth",
+    "test:dashboard": "playwright test tests/dashboard",
+    "test:users": "playwright test tests/users",
+    "test:products": "playwright test tests/products",
+    "test:navigation": "playwright test tests/navigation",
+    "report": "playwright show-report",
+    "codegen": "playwright codegen"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0"
+  }
+}

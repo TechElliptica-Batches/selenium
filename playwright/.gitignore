@@ -1,0 +1,6 @@
+node_modules/
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+resources/environments/local.override.properties
