@@ -10,7 +10,8 @@ export default defineConfig({
   reporter: [
     ["list"],
     ["html", { open: "never", outputFolder: "playwright-report" }],
-    ["json", { outputFile: "test-results/results.json" }]
+    ["json", { outputFile: "test-results/results.json" }],
+    ...(process.env.CI ? [["junit", { outputFile: "test-results/junit-results.xml" }]] : [])
   ],
   timeout: 60_000,
   expect: { timeout: EXPLICIT_WAIT_SECONDS * 1000 },

@@ -1,0 +1,176 @@
+# Azure DevOps — Playwright E2E Pipeline (with local app stack)
+#
+# Use when the agent must start the full app stack before tests
+# (Users API :4000, Products API :4001, Frontend :5173).
+#
+# Prerequisites:
+#   - Add pipeline resource checkout for the api-practice repository
+#   - Update resources.repositories.apiPractice.name to your repo path
+#
+# For deployed environments (staging/production), use ../azure-pipelines.yml instead.
+
+trigger: none
+
+pr: none
+
+parameters:
+  - name: testScope
+    displayName: Test scope
+    type: string
+    default: all
+    values:
+      - all
+      - auth
+      - dashboard
+      - navigation
+      - users
+      - products
+
+variables:
+  - name: nodeVersion
+    value: "20.x"
+  - name: playwrightDir
+    value: playwright
+  - name: CI
+    value: "true"
+  - name: ENVIRONMENT
+    value: local
+  - name: HEADLESS
+    value: "true"
+  - name: BASE_URL
+    value: http://localhost:5173
+  - name: USERS_API_BASE_URL
+    value: http://localhost:4000/api
+  - name: PRODUCTS_API_BASE_URL
+    value: http://localhost:4001/api
+  - name: ADMIN_EMAIL
+    value: admin@acme.test
+  - name: ADMIN_PASSWORD
+    value: admin123
+  - name: apiPracticeDir
+    value: $(Pipeline.Workspace)/api-practice
+
+resources:
+  repositories:
+    - repository: apiPractice
+      type: git
+      # Update to your api-practice Azure DevOps repo:
+      name: your-org/api-practice
+      ref: main
+
+stages:
+  - stage: E2E_Playwright_Local
+    displayName: Playwright E2E (local app stack)
+    jobs:
+      - job: RunWithAppStack
+        displayName: Start app + run tests
+        pool:
+          vmImage: ubuntu-latest
+        timeoutInMinutes: 90
+        steps:
+          - checkout: self
+            path: automation
+            displayName: Checkout automation repo
+
+          - checkout: apiPractice
+            path: api-practice
+            displayName: Checkout api-practice app repo
+
+          - task: NodeTool@0
+            displayName: Install Node.js
+            inputs:
+              versionSpec: $(nodeVersion)
+
+          - script: npm ci
+            displayName: Install api-practice dependencies
+            workingDirectory: $(apiPracticeDir)
+
+          - script: |
+              set -e
+              npm run backend:users &
+              USERS_PID=$!
+              npm run backend:products &
+              PRODUCTS_PID=$!
+              npm run frontend &
+              FRONTEND_PID=$!
+
+              echo "Waiting for services to be healthy..."
+              for i in $(seq 1 60); do
+                FE=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 || true)
+                UAPI=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4000/api/health || true)
+                PAPI=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:4001/api/health || true)
+                if [ "$FE" = "200" ] && [ "$UAPI" = "200" ] && [ "$PAPI" = "200" ]; then
+                  echo "All services are up."
+                  break
+                fi
+                if [ "$i" -eq 60 ]; then
+                  echo "Services failed to start in time."
+                  kill $USERS_PID $PRODUCTS_PID $FRONTEND_PID 2>/dev/null || true
+                  exit 1
+                fi
+                sleep 5
+              done
+              echo "##vso[task.setvariable variable=USERS_PID]$USERS_PID"
+              echo "##vso[task.setvariable variable=PRODUCTS_PID]$PRODUCTS_PID"
+              echo "##vso[task.setvariable variable=FRONTEND_PID]$FRONTEND_PID"
+            displayName: Start app stack (background)
+            workingDirectory: $(apiPracticeDir)
+
+          - script: npm ci
+            displayName: Install Playwright dependencies
+            workingDirectory: $(Pipeline.Workspace)/automation/$(playwrightDir)
+
+          - script: npx playwright install --with-deps chromium
+            displayName: Install Playwright browsers
+            workingDirectory: $(Pipeline.Workspace)/automation/$(playwrightDir)
+
+          - script: |
+              set -e
+              SCOPE="${{ parameters.testScope }}"
+              if [ "$SCOPE" = "all" ]; then
+                npm test
+              else
+                npm run "test:$SCOPE"
+              fi
+            displayName: Run Playwright tests
+            workingDirectory: $(Pipeline.Workspace)/automation/$(playwrightDir)
+            env:
+              CI: $(CI)
+              ENVIRONMENT: $(ENVIRONMENT)
+              HEADLESS: $(HEADLESS)
+              BASE_URL: $(BASE_URL)
+              USERS_API_BASE_URL: $(USERS_API_BASE_URL)
+              PRODUCTS_API_BASE_URL: $(PRODUCTS_API_BASE_URL)
+              ADMIN_EMAIL: $(ADMIN_EMAIL)
+              ADMIN_PASSWORD: $(ADMIN_PASSWORD)
+
+          - script: |
+              kill $(USERS_PID) $(PRODUCTS_PID) $(FRONTEND_PID) 2>/dev/null || true
+            displayName: Stop app stack
+            condition: always()
+
+          - task: PublishTestResults@2
+            displayName: Publish test results (JUnit)
+            condition: succeededOrFailed()
+            inputs:
+              testResultsFormat: JUnit
+              testResultsFiles: $(Pipeline.Workspace)/automation/$(playwrightDir)/test-results/junit-results.xml
+              testRunTitle: Playwright E2E (local stack)
+              mergeTestResults: true
+              failTaskOnFailedTests: true
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish Playwright HTML report
+            condition: succeededOrFailed()
+            inputs:
+              targetPath: $(Pipeline.Workspace)/automation/$(playwrightDir)/playwright-report
+              artifact: playwright-html-report
+              publishLocation: pipeline
+
+          - task: PublishPipelineArtifact@1
+            displayName: Publish failure artifacts
+            condition: failed()
+            inputs:
+              targetPath: $(Pipeline.Workspace)/automation/$(playwrightDir)/test-results
+              artifact: playwright-test-results
+              publishLocation: pipeline

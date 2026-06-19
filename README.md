@@ -96,6 +96,17 @@ selenium/
 - **WebDriverManager** — automatic ChromeDriver setup
 - **ApiClient** — REST helpers for setup/teardown
 
+## Azure DevOps CI
+
+Playwright E2E pipeline: [`azure-pipelines.yml`](azure-pipelines.yml) — runs all 54 tests, publishes JUnit + HTML report.
+
+```bash
+# Pipeline path when creating in Azure DevOps:
+/azure-pipelines.yml
+```
+
+See [playwright/README.md](playwright/README.md#azure-devops-pipeline) for variable setup.
+
 ## Sample credentials
 
 - Email: `admin@acme.test`
